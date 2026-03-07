@@ -3,6 +3,7 @@
 
 #include <allocator_dbg_helper.h>
 #include <pp_allocator.h>
+#include <mutex>
 
 class allocator_global_heap final:
     private allocator_dbg_helper,
@@ -16,20 +17,17 @@ private:
 public:
     
     explicit allocator_global_heap();
+
     
     ~allocator_global_heap() override;
     
-    allocator_global_heap(
-        allocator_global_heap const &other);
-    
-    allocator_global_heap &operator=(
-        allocator_global_heap const &other);
-    
-    allocator_global_heap(
-        allocator_global_heap &&other) noexcept;
-    
-    allocator_global_heap &operator=(
-        allocator_global_heap &&other) noexcept;
+    allocator_global_heap(allocator_global_heap const &other) = delete;
+
+    allocator_global_heap(allocator_global_heap&& other) = delete;
+
+    allocator_global_heap& operator=(allocator_global_heap const &other) noexcept = delete;
+
+    allocator_global_heap& operator=(allocator_global_heap&& other) noexcept = delete;
 
 private:
     
@@ -40,6 +38,8 @@ private:
         void *at) override;
 
     bool do_is_equal(const std::pmr::memory_resource& other) const noexcept override;
+
+    mutable std::mutex mtx;
 
 };
 
