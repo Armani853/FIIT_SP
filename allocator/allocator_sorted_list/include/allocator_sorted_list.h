@@ -4,6 +4,7 @@
 #include <pp_allocator.h>
 #include <allocator_test_utils.h>
 #include <allocator_with_fit_mode.h>
+#include <cstring>
 #include <iterator>
 #include <mutex>
 
@@ -17,9 +18,41 @@ private:
     
     void *_trusted_memory;
 
-    static constexpr const size_t allocator_metadata_size = sizeof(std::pmr::memory_resource *) + sizeof(fit_mode) + sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
+    struct allocator_meta {
+        std::pmr::memory_resource* parent_allocator;
+        allocator_with_fit_mode::fit_mode fit_mode;
+        size_t total_size;
+        std::mutex sync_mutex;
+        void* first_free_block;
+    };
 
-    static constexpr const size_t block_metadata_size = sizeof(void*) + sizeof(size_t);
+    struct block_header {
+        size_t size;
+        void* next_free_block;
+    };
+    
+    static constexpr const size_t allocator_metadata_size = sizeof(allocator_meta);
+    static constexpr const size_t block_metadata_size = sizeof(block_header);
+
+    static allocator_meta* get_meta(void* trusted) {
+        return static_cast<allocator_meta*>(trusted);
+    }
+
+    static size_t& get_block_size(void* block) {
+        return reinterpret_cast<block_header*>(block)->size;
+    }
+
+    static void*& get_block_next(void* block) {
+        return reinterpret_cast<block_header*>(block)->next_free_block;
+    }
+
+    static void* get_user_ptr(void* block) {
+        return static_cast<char*>(block) + block_metadata_size;
+    }
+
+    static void* get_block_ptr(void* user_ptr) {
+        return static_cast<char*>(user_ptr) - block_metadata_size;
+    }
 
 public:
 
