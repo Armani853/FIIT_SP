@@ -4,6 +4,7 @@
 #include <allocator_test_utils.h>
 #include <allocator_with_fit_mode.h>
 #include <pp_allocator.h>
+#include <cstring>
 #include <iterator>
 #include <mutex>
 
@@ -15,14 +16,73 @@ class allocator_boundary_tags final :
 
 private:
 
-    static constexpr const size_t allocator_metadata_size = sizeof(memory_resource*) + sizeof(allocator_with_fit_mode::fit_mode) +
-                                                            sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
+    void *_trusted_memory;
+
+    struct allocator_meta {
+        std::pmr::memory_resource* parent_allocator;
+        allocator_with_fit_mode::fit_mode fit_mode;
+        size_t total_size;
+        std::mutex sync_mutex;
+        void* first_block;
+    };
+
+    struct block_header {
+        size_t size;
+        void* prev_block;
+        void* next_block;
+        size_t is_free;
+    };
+
+    struct block_footer {
+        size_t size;
+    };
+
+    static constexpr size_t HEADER_SIZE = sizeof(block_header);
+    static constexpr size_t FOOTER_SIZE = 0;
+    static constexpr size_t FULL_BLOCK_META_SIZE = HEADER_SIZE + FOOTER_SIZE;
+
+    static constexpr const size_t allocator_metadata_size = sizeof(allocator_meta);
 
     static constexpr const size_t occupied_block_metadata_size = sizeof(size_t) + sizeof(void*) + sizeof(void*) + sizeof(void*);
 
     static constexpr const size_t free_block_metadata_size = 0;
 
-    void *_trusted_memory;
+
+    static allocator_meta* get_meta(void* trusted) {
+        return static_cast<allocator_meta*>(trusted);
+    }
+
+    static block_header* get_header(void* block_start) {
+        return static_cast<block_header*>(block_start);
+    }    
+
+    static block_footer* get_footer(void* block_start) {
+        return reinterpret_cast<block_footer*>(static_cast<char*>(block_start) + get_header(block_start)->size);
+    }
+
+    static void* get_user_ptr(void* block_start) {
+        return static_cast<char*>(block_start) + HEADER_SIZE;
+    }
+
+    static void* get_block_start(void* user_ptr) {
+        return static_cast<char*>(user_ptr) - HEADER_SIZE;
+    }
+
+    static void* get_next_block(void* block_start) {
+        return static_cast<char*>(block_start) + get_header(block_start)->size;
+    }
+
+    static void* get_prev_block(void* block_start, void* trusted) {
+        if (static_cast<char*>(trusted) + allocator_metadata_size == block_start) {
+            return nullptr;
+        }
+        return get_header(block_start)->prev_block;
+    }
+
+    static bool is_block_free(void* block_start) {
+        return get_header(block_start)->is_free;
+    }
+
 
 public:
     
