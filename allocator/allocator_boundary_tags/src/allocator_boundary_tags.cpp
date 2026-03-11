@@ -360,3 +360,4 @@ void *allocator_boundary_tags::boundary_iterator::get_ptr() const noexcept
 {
     return _occupied_ptr;
 }
+
