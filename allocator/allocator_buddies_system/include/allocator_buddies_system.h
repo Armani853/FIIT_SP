@@ -4,6 +4,7 @@
 #include <pp_allocator.h>
 #include <allocator_test_utils.h>
 #include <allocator_with_fit_mode.h>
+#include <cstring>
 #include <mutex>
 #include <cmath>
 
@@ -46,14 +47,120 @@ private:
 
     void *_trusted_memory;
 
-    /**
-     * TODO: You must improve it for alignment support
-     */
+    struct allocator_meta {
+        allocator_dbg_helper* dbg_helper;
+        allocator_with_fit_mode::fit_mode fit_mode;
+        std::pmr::memory_resource* parent_allocator;
+        unsigned char max_k;
+        std::mutex sync_mutex;
+    };
 
-    static constexpr const size_t allocator_metadata_size = sizeof(allocator_dbg_helper*) + sizeof(fit_mode) + sizeof(unsigned char) + sizeof(std::mutex);
+    static allocator_meta* get_meta(void* trusted) {
+        return static_cast<allocator_meta*>(trusted);
+    }
+
+    static void** get_free_lists(void* trusted) {
+        return reinterpret_cast<void**>(static_cast<char*>(trusted) + sizeof(allocator_meta));
+    }
+
+    static void*& get_free_list(void* trusted, unsigned char k) {
+        auto* meta = get_meta(trusted);
+        void** base = get_free_lists(trusted);
+        size_t index = k - min_k;
+        return base[index];
+    }
+
+    static size_t block_size_from_k(unsigned char k) {
+        return static_cast<size_t>(1) << k;
+    }
+
+    static unsigned char get_k_for_size(size_t size, unsigned char max_k) {
+        unsigned char k = min_k;
+        while (block_size_from_k(k) < size && k <= max_k) {
+            k++;
+        }
+        return k;
+    }
+
+    static void* get_buddy(void* block, size_t block_size, void* first_block_addr) {
+        uintptr_t relative_addr = reinterpret_cast<uintptr_t>(block) - reinterpret_cast<uintptr_t>(first_block_addr);
+        uintptr_t buddy_relative_addr = relative_addr ^ block_size;
+        void* buddy = reinterpret_cast<void*>(buddy_relative_addr + reinterpret_cast<uintptr_t>(first_block_addr));
+        return buddy;
+    }
+
+    static block_metadata* get_block_metadata(void* block) {
+        return static_cast<block_metadata*>(block);
+    }
+
+    static bool is_block_occupied(void* block) {
+        return static_cast<block_metadata*>(block)->occupied;
+    }
+
+    static unsigned char get_block_k(void* block) {
+        return static_cast<block_metadata*>(block)->size;
+    }
+
+    static void set_block_metadata(void* block, bool occupied, unsigned char k) {
+        auto* meta = get_block_metadata(block);
+        meta->occupied = occupied;
+        meta->size = k;
+    }
+
+    static void*& get_block_next(void* block) {
+        return *reinterpret_cast<void**>(static_cast<char*>(block) + sizeof(block_metadata));
+    }
+
+    static void* get_user_ptr(void* block) {
+        return static_cast<char*>(block) + occupied_block_metadata_size;
+    }
+
+    static void* get_block_ptr(void* user_ptr) {
+        return static_cast<char*>(user_ptr) - occupied_block_metadata_size;
+    }
+
+    void insert_into_free_list(void* trusted, void* block) {
+        unsigned char k = get_block_k(block);
+        void*& head = get_free_list(trusted, k);
+        get_block_next(block) = head;
+        head = block;
+    }
+
+    void remove_from_free_list(void* trusted, void* block, void* prev) {
+        if (!block) return;
+        unsigned char k = get_block_k(block);
+        void*& head = get_free_list(trusted, k);
+        if (prev == nullptr && head != block) {
+            prev = find_prev_in_free_list(trusted, block);
+        }
+        if (head == block) {
+            head = get_block_next(block);
+        } else if (prev != nullptr) {
+            get_block_next(prev) = get_block_next(block);
+        } else {
+            return; 
+        }
+        get_block_next(block) = nullptr;
+    }
+
+    void* find_prev_in_free_list(void* trusted, void* block) {
+        if (!block) {
+            return nullptr;
+        }
+        unsigned char k = get_block_k(block);
+        void* curr = get_free_list(trusted, k);
+        void* prev = nullptr;
+        while (curr && curr != block) {
+            prev = curr;
+            curr = get_block_next(curr);
+        }
+        return (curr == block) ? prev : nullptr;
+    }
+
+    static constexpr const size_t allocator_metadata_size = sizeof(allocator_meta);
 
     static constexpr const size_t occupied_block_metadata_size = sizeof(block_metadata) + sizeof(void*);
-
+    
     static constexpr const size_t free_block_metadata_size = sizeof(block_metadata);
 
     static constexpr const size_t min_k = __detail::nearest_greater_k_of_2(occupied_block_metadata_size);
@@ -99,8 +206,8 @@ private:
 
     std::vector<allocator_test_utils::block_info> get_blocks_info_inner() const override;
 
-    /** TODO: Highly recommended for helper functions to return references */
 
+    
     class buddy_iterator
     {
         void* _block;
