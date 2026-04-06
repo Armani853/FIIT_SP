@@ -4,6 +4,7 @@
 #include <pp_allocator.h>
 #include <allocator_test_utils.h>
 #include <allocator_with_fit_mode.h>
+#include <cstring>
 #include <mutex>
 
 class allocator_red_black_tree final:
@@ -133,7 +134,11 @@ private:
     }
 
     void rb_insert_fixup(void*& root, void* z) {
-        while (get_block_parent(z) && get_block_color(get_block_parent(z)) == block_color::RED) {
+        while (
+            get_block_parent(z) 
+            && 
+            get_block_color(get_block_parent(z)) == block_color::RED
+    ) {
             if (get_block_parent(z) == get_block_right(get_block_parent(get_block_parent(z)))) {
                 void* y = get_block_right(get_block_parent(get_block_parent(z)));
                 if (y && get_block_color(y) == block_color::RED) {
@@ -196,58 +201,241 @@ private:
         rb_insert_fixup(root, z);
     }
 
-    void* rb_find(void* root, size_t size, allocator_with_fit_mode::fit_mode mode) {
-        if (!root) {
-            return nullptr;
-        } 
-        if (mode == allocator_with_fit_mode::fit_mode::first_fit) {
-            void* curr = root;
-            void* result = nullptr;
-            while (curr) {
-                if (size <= get_block_size(curr)) {
-                    result = curr;
-                    curr = get_block_left(curr);
-                } else {
-                    curr = get_block_right(curr);
-                }
-            }
-            return result;
+    // void* rb_find(void* root, size_t size, allocator_with_fit_mode::fit_mode mode) {
+    //     if (!root) {
+    //         return nullptr;
+    //     } 
+    //     if (mode == allocator_with_fit_mode::fit_mode::first_fit) {
+    //         void* curr = root;
+    //         void* result = nullptr;
+    //         while (curr) {
+    //             if (size <= get_block_size(curr)) {
+    //                 result = curr;
+    //                 curr = get_block_left(curr);
+    //             } else {
+    //                 curr = get_block_right(curr);
+    //             }
+    //         }
+    //         return result;
+    //     }
+    //     else if (mode == allocator_with_fit_mode::fit_mode::the_best_fit) {
+    //         void* curr = root;
+    //         void* best = nullptr;
+    //         size_t best_size = SIZE_MAX;
+    //         while (curr) {
+    //             size_t curr_size = get_block_size(curr);
+    //             if (size <= curr_size && curr_size < best_size) {
+    //                 best_size = curr_size;
+    //                 best = curr;
+    //             }
+    //             if (size < curr_size) {
+    //                 curr = get_block_left(curr);
+    //             } else {
+    //                 curr = get_block_right(curr);
+    //             }
+    //         }
+    //         return best;
+    //     } else if (mode == allocator_with_fit_mode::fit_mode::the_worst_fit) {
+    //         void* curr = root;
+    //         void* worst = nullptr;
+    //         while (curr) {
+    //             worst = curr;
+    //             curr = get_block_right(curr);
+    //         }
+    //         if (worst && get_block_size(worst) >= size) {
+    //             return worst;
+    //         }
+    //         return nullptr;
+    //     }
+    //     return nullptr;
+    // }
+
+    void transplant(void*& root, void* x, void* y) {
+        if (get_block_parent(x) == nullptr) {
+            root = y;
+        } else if (x == get_block_left(get_block_parent(x))) {
+            get_block_left(get_block_parent(x)) = y;
+        } else {
+            get_block_right(get_block_parent(x)) = y;
         }
-        else if (mode == allocator_with_fit_mode::fit_mode::the_best_fit) {
-            void* curr = root;
-            void* best = nullptr;
-            size_t best_size = SIZE_MAX;
-            while (curr) {
-                size_t curr_size = get_block_size(curr);
-                if (size <= curr_size && curr_size < best_size) {
-                    best_size = curr_size;
-                    best = curr;
+        if (y) {
+            get_block_parent(y) = get_block_parent(x);
+        }
+    }
+
+    void* min(void* node) {
+        if (node == nullptr) {
+            return nullptr;
+        }
+        while (get_block_left(node)) {
+            node = get_block_left(node);
+        }
+        return node;
+    }
+
+    void rb_delete_fixup(void*& root, void* x, void* x_parent) {
+        while (x != root && (x == nullptr || get_block_color(x) == block_color::BLACK)) {
+            void* w = nullptr;
+            if (x == get_block_left(x_parent)) {
+                w = get_block_right(x_parent);
+                if (w && get_block_color(w) == block_color::RED) {
+                    set_block_color(w, block_color::BLACK);
+                    set_block_color(x_parent, block_color::RED);
+                    rotate_left(root, x_parent);
+                    w = get_block_right(x_parent);
                 }
-                if (size < curr_size) {
-                    curr = get_block_left(curr);
+                bool left_black = (get_block_left(w) == nullptr || get_block_color(get_block_left(w)) == block_color::BLACK);
+                bool right_black = (get_block_right(w) == nullptr || get_block_color(get_block_right(w)) == block_color::BLACK);
+                if (left_black && right_black) {
+                    if (w) {
+                        set_block_color(w, block_color::RED);
+                    }
+                    x = x_parent;
+                    x_parent = get_block_parent(x);
                 } else {
-                    curr = get_block_right(curr);
+                    if (right_black) {
+                        if (get_block_left(w)) {
+                            set_block_color(get_block_left(w), block_color::BLACK);
+                        }
+                        set_block_color(w, block_color::RED);
+                        rotate_right(root, w);
+                        w = get_block_right(x_parent);
+                    }
+                    set_block_color(w, get_block_color(x_parent));
+                    set_block_color(x_parent, block_color::BLACK);
+                    if (get_block_right(w)) {
+                        set_block_color(get_block_right(w), block_color::BLACK);
+                    }
+                    rotate_left(root, x_parent);
+                    x = root;
+                }
+            } else {
+                w = get_block_left(x_parent);
+                if (w && get_block_color(w) == block_color::RED) {
+                    set_block_color(w, block_color::BLACK);
+                    set_block_color(x_parent, block_color::RED);
+                    rotate_right(root, x_parent);
+                    w = get_block_left(x_parent);
+                }
+                bool left_black = (get_block_left(w) == nullptr || get_block_color(get_block_left(w)) == block_color::BLACK);
+                bool right_black = (get_block_right(w) == nullptr || get_block_color(get_block_right(w)) == block_color::BLACK);
+                if (left_black && right_black) {
+                    if (w) {
+                        set_block_color(w, block_color::RED);
+                    }
+                    x = x_parent;
+                    x_parent = get_block_parent(x);
+                } else {
+                    if (left_black) {
+                        if (get_block_right(w)) {
+                            set_block_color(get_block_right(w), block_color::BLACK);
+                        }
+                        set_block_color(w, block_color::RED);
+                        rotate_left(root, w);
+                        w = get_block_left(x_parent);
+                    }
+                    set_block_color(w, get_block_color(x_parent));
+                    set_block_color(x_parent, block_color::BLACK);
+                    if (get_block_left(w)) {
+                        set_block_color(get_block_left(w), block_color::BLACK);
+                    }
+                    rotate_right(root, x_parent);
+                    x = root;
                 }
             }
-            return best;
-        } else if (mode == allocator_with_fit_mode::fit_mode::the_worst_fit) {
-            void* curr = root;
-            void* worst = nullptr;
-            while (curr) {
-                worst = curr;
+        }
+        if (x) {
+            set_block_color(x, block_color::BLACK);
+        }
+    }
+
+    void rb_delete(void*& root, void* z) {
+        void* y = z;
+        block_color y_original_color = get_block_color(y);
+        void* x = nullptr;
+        void* x_parent = nullptr;
+        if (get_block_left(z) == nullptr) {
+            x = get_block_right(z);
+            x_parent = get_block_parent(z);
+            transplant(root, z, x);
+        } else if (get_block_right(z) == nullptr) {
+            x = get_block_left(z);
+            x_parent = get_block_parent(z);
+            transplant(root, z, x);
+        } else {
+            y = min(get_block_right(z));
+            y_original_color = get_block_color(y);
+            x = get_block_right(y);
+            if (get_block_parent(y) == z) {
+                x_parent = y;
+            } else {
+                x_parent = get_block_parent(y);
+                transplant(root, y, x);
+                get_block_right(y) = get_block_right(z);
+                get_block_parent(get_block_right(y)) = y;   
+            }
+            transplant(root, z, y);
+            get_block_left(y) = get_block_left(z);
+            get_block_parent(get_block_left(y)) = y;
+            set_block_color(y, get_block_color(z));
+        }
+        if (y_original_color == block_color::BLACK) {
+            rb_delete_fixup(root, x, x_parent);
+        }
+    }
+
+    void* rb_find_first_fit(void* root, size_t size) {
+        void* curr = root;
+        void* result = nullptr;
+        while (curr) {
+            if (size <= get_block_size(curr)) {
+                result = curr;
+                curr = get_block_left(curr);
+            } else {
                 curr = get_block_right(curr);
             }
-            if (worst && get_block_size(worst) >= size) {
-                return worst;
+        }
+        return result;
+    }
+
+    void* rb_find_best_fit(void* root, size_t size) {
+        void* curr = root;
+        void* best = nullptr;
+        while (curr) {
+            size_t curr_size = get_block_size(curr);
+            if (size <= curr_size) {
+                best = curr;
+                curr = get_block_left(curr);
+            } else {
+                curr = get_block_right(curr);
             }
+        }
+        return best;
+    }
+    
+    void* rb_find_worst_fit(void* root, size_t size) {
+        if (!root) {
             return nullptr;
+        }
+        void* curr = root;
+        while (get_block_right(curr)) {
+            curr = get_block_right(curr);
+        }
+        if (get_block_size(curr) >= size) {
+            return curr;
         }
         return nullptr;
     }
 
-    static constexpr const size_t allocator_metadata_size = sizeof(allocator_dbg_helper*) + sizeof(fit_mode) + sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
-    static constexpr const size_t occupied_block_metadata_size = sizeof(block_data) + 3 * sizeof(void*);
-    static constexpr const size_t free_block_metadata_size = sizeof(block_data) + 5 * sizeof(void*);
+    static constexpr const size_t allocator_metadata_size = sizeof(allocator_meta);
+
+    // static constexpr const size_t allocator_metadata_size = sizeof(allocator_dbg_helper*) + sizeof(fit_mode) + sizeof(size_t) + sizeof(std::mutex) + sizeof(void*);
+
+    static constexpr const size_t occupied_block_metadata_size = 56;
+    static constexpr const size_t free_block_metadata_size = 56;
+
+    // static constexpr const size_t occupied_block_metadata_size = sizeof(block_data) + 3 * sizeof(void*);
+    // static constexpr const size_t free_block_metadata_size = sizeof(block_data) + 5 * sizeof(void*);
 
 public:
     
